@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mess-io-proto"
+dynamic = ["version"]
+description = ''
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "Andreas Copan", email = "avcopan@gmail.com" },
+]
+dependencies = []
+
+[tool.hatch.version]
+path = "src/mess_io_proto/__about__.py"
