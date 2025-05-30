@@ -1,10 +1,12 @@
 """Read MESS file format."""
 
 import itertools
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Annotated
 
 import networkx
+import pyvis
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -15,13 +17,24 @@ from pydantic import (
 from .util import MessBlockParseData, mess
 
 
-class Well(BaseModel):
+class Well(BaseModel, ABC):
     id: int
     energy: float
+
+    @property
+    @abstractmethod
+    def label(self):
+        """Label."""
+        pass
 
 
 class UnimolWell(Well):
     name: str
+
+    @property
+    def label(self):
+        """Label."""
+        return self.name
 
 
 class NMolWell(Well):
@@ -29,12 +42,26 @@ class NMolWell(Well):
     interacting: bool = False
     fake: bool = False
 
+    @property
+    def label(self):
+        """Label."""
+        label = " + ".join(self.names)
+        if self.fake:
+            label = f"Fake({label})"
+
+        return label
+
 
 class Barrier(BaseModel):
     well_ids: Annotated[tuple[int, int], AfterValidator(lambda x: tuple(sorted(x)))]
     name: str
     energy: float
     fake: bool = False
+
+    @property
+    def label(self):
+        """Label."""
+        return self.name
 
 
 class Surface(BaseModel):
@@ -80,10 +107,37 @@ def from_mess(mess_inp: str | Path) -> Surface:
 
 def graph(surf: Surface) -> networkx.MultiGraph:
     """Generate NetworkX graph."""
-    net = networkx.MultiGraph()
-    net.add_nodes_from([(w.id, w.model_dump()) for w in surf.wells])
-    net.add_edges_from([(*b.well_ids, b.model_dump()) for b in surf.barriers])
-    return net
+    nx_gra = networkx.MultiGraph()
+    nx_gra.add_nodes_from([(w.id, w.model_dump()) for w in surf.wells])
+    nx_gra.add_edges_from([(*b.well_ids, b.model_dump()) for b in surf.barriers])
+    return nx_gra
+
+
+def display_network(
+    surf: Surface,
+    height: str = "750px",
+    out_name: str = "net.html",
+    out_dir: str = ".pyvis",
+    open_browser: bool = True,
+) -> None:
+    """Display surface as a pyvis Network.
+
+    :param surf: Surface
+    :param height: Frame height
+    """
+    out_dir: Path = Path(out_dir)
+    out_dir.mkdir(exist_ok=True)
+
+    vis_net = pyvis.network.Network(
+        height=height, directed=False, notebook=True, cdn_resources="in_line"
+    )
+    for well in surf.wells:
+        vis_net.add_node(well.id, label=well.label)
+    for barrier in surf.barriers:
+        vis_net.add_edge(*barrier.well_ids, title=barrier.label)
+
+    # Generate the HTML file
+    vis_net.write_html(str(out_dir / out_name), open_browser=open_browser)
 
 
 # Helpers
