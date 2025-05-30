@@ -2,11 +2,14 @@
 
 import itertools
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Literal
 
+import more_itertools as mit
 import networkx
 import pyvis
+from matplotlib import axes, pyplot
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -107,6 +110,59 @@ def from_mess(mess_inp: str | Path) -> Surface:
     return Surface(wells=wells, barriers=barriers)
 
 
+def subsurface(surf: Surface, well_ids: Sequence[int]) -> Surface:
+    """Extract a sub-surface from wells.
+
+    :param surf: Surface
+    :return: Surface
+    """
+    well_ids = set(well_ids)
+    return Surface(
+        wells=[w for w in surf.wells if w.id in well_ids],
+        barriers=[b for b in surf.barriers if set(b.well_ids) <= well_ids],
+    )
+
+
+def longest_path(surf: Surface) -> Surface:
+    """Longest surface path.
+
+    :param surf: Surface
+    :return: Path surface
+    """
+    nx_gra = graph(surf)
+    well_id_seq = max(
+        (p for _, d in networkx.all_pairs_shortest_path(nx_gra) for p in d.values()),
+        key=len,
+    )
+    return path_from_well_id_sequence(surf, well_id_seq)
+
+
+def path_from_well_id_sequence(
+    surf: Surface, well_id_seq: Sequence[int]
+) -> list[Well | Barrier]:
+    """Generate ordered sequence of wells and barriers from a well ID sequence.
+
+    :param surf: Surface
+    :param path: Path
+    :return: Wells and barriers in order
+    """
+    seq = list(mit.interleave(well_id_seq, map(frozenset, mit.pairwise(well_id_seq))))
+    dct = {w.id: w for w in surf.wells}
+    dct.update({frozenset(b.well_ids): b for b in surf.barriers})
+    assert all(k in dct for k in seq), f"Disconnected sequence: {well_id_seq}"
+    return list(map(dct.get, seq))
+
+
+def plot_path(path: Sequence[Well | Barrier], ax: axes.Axes):
+    """Plot path onto matplotlib axes.
+
+    :param path: Path
+    :param ax: Axes
+    """
+    positions, energies = zip(*enumerate(f.energy for f in path), strict=True)
+    ax.plot(positions, energies)
+
+
 def from_graph(nx_gra: networkx.MultiGraph) -> Surface:
     """Generate Surface from NetworkX MultiGraph."""
     wells = [well_from_data(d) for *_, d in nx_gra.nodes.data()]
@@ -141,7 +197,7 @@ def display_network(
         height=height, directed=False, notebook=True, cdn_resources="in_line"
     )
     for well in surf.wells:
-        vis_net.add_node(well.id, label=well.label)
+        vis_net.add_node(well.id, label=well.label, title=str(well.id))
     for barrier in surf.barriers:
         vis_net.add_edge(*barrier.well_ids, title=barrier.label)
 
