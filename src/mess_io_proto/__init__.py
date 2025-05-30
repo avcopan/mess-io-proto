@@ -1,3 +1,5 @@
-# SPDX-FileCopyrightText: 2025-present Andreas Copan <avcopan@gmail.com>
-#
-# SPDX-License-Identifier: MIT
+"""Prototype for MESS I/O."""
+
+from . import surface, util
+
+__all__ = ["util", "surface"]
