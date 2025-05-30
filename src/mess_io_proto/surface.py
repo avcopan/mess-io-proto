@@ -3,7 +3,7 @@
 import itertools
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import networkx
 import pyvis
@@ -29,6 +29,7 @@ class Well(BaseModel, ABC):
 
 
 class UnimolWell(Well):
+    type: Literal["unimol"] = "unimol"
     name: str
 
     @property
@@ -38,6 +39,7 @@ class UnimolWell(Well):
 
 
 class NMolWell(Well):
+    type: Literal["nmol"] = "nmol"
     names: Annotated[list[str], AfterValidator(sorted)]
     interacting: bool = False
     fake: bool = False
@@ -105,8 +107,15 @@ def from_mess(mess_inp: str | Path) -> Surface:
     return Surface(wells=wells, barriers=barriers)
 
 
+def from_graph(nx_gra: networkx.MultiGraph) -> Surface:
+    """Generate Surface from NetworkX MultiGraph."""
+    wells = [well_from_data(d) for *_, d in nx_gra.nodes.data()]
+    barriers = [Barrier.model_validate(d) for *_, d in nx_gra.edges.data()]
+    return Surface(wells=wells, barriers=barriers)
+
+
 def graph(surf: Surface) -> networkx.MultiGraph:
-    """Generate NetworkX graph."""
+    """Generate NetworkX MultiGraph."""
     nx_gra = networkx.MultiGraph()
     nx_gra.add_nodes_from([(w.id, w.model_dump()) for w in surf.wells])
     nx_gra.add_edges_from([(*b.well_ids, b.model_dump()) for b in surf.barriers])
@@ -141,6 +150,18 @@ def display_network(
 
 
 # Helpers
+def well_from_data(data: dict[str, object]) -> Well:
+    """Generate Well object from data.
+
+    :param data: Data
+    :return: Well
+    """
+    if data.get("type") == "nmol":
+        return NMolWell.model_validate(data)
+
+    return UnimolWell.model_validate(data)
+
+
 def well_from_mess_block_parse_data(
     data: MessBlockParseData, id_dct: dict[str, int]
 ) -> Well:
