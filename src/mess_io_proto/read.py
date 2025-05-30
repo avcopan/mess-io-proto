@@ -15,62 +15,67 @@ from pydantic import (
 from pyparsing import pyparsing_common as ppc
 
 
-class Node(BaseModel):
+class Well(BaseModel):
     id: int
     energy: float
 
 
-class UnimolNode(Node):
+class UnimolWell(Well):
     name: str
 
 
-class NMolNode(Node):
-    names: list[str]
-    complex: bool = False
+class NMolWell(Well):
+    names: Annotated[list[str], AfterValidator(sorted)]
+    interacting: bool = False
     fake: bool = False
 
 
-class Edge:
-    node_ids: Annotated[tuple[int, int], AfterValidator(lambda x: tuple(sorted(x)))]
+class Barrier(BaseModel):
+    well_ids: Annotated[tuple[int, int], AfterValidator(lambda x: tuple(sorted(x)))]
     name: str
     energy: float
     fake: bool = False
 
 
-class Network(BaseModel):
+class Surface(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    nodes: list[Node]
-    edges: list[Edge]
+    wells: list[Well]
+    barriers: list[Barrier]
 
     @model_validator(mode="after")
     def _validate_ids(self):
-        # Validate node IDs
-        node_ids = [n.id for n in self.nodes]
-        node_id_set = set(node_ids)
-        if not len(node_ids) == len(node_id_set):
-            raise ValueError(f"Repeated node IDs: {node_ids}")
+        # Validate well IDs
+        well_ids = [n.id for n in self.wells]
+        well_id_set = set(well_ids)
+        if not len(well_ids) == len(well_id_set):
+            raise ValueError(f"Repeated well IDs: {well_ids}")
 
-        # Validate edge IDs
-        edge_node_ids_lst = [e.node_ids for e in self.edges]
-        edge_node_id_set = set(itertools.chain.from_iterable(edge_node_ids_lst))
-        if not edge_node_id_set <= node_id_set:
-            raise ValueError(f"Edges include missing node IDs: {edge_node_ids_lst}")
+        # Validate barrier well IDs
+        barrier_well_ids_lst = [e.well_ids for e in self.barriers]
+        barrier_well_id_set = set(itertools.chain.from_iterable(barrier_well_ids_lst))
+        if not barrier_well_id_set <= well_id_set:
+            raise ValueError(f"Undefined well IDs for barriers: {barrier_well_ids_lst}")
+
+        return self
 
 
-def network(mess_inp: str | Path) -> Network:
-    """Read network.
+def surface(mess_inp: str | Path) -> Surface:
+    """Read surface.
 
     :param mess_inp: MESS input
-    :return: Network
+    :return: Surface
     """
     all_blocks = blocks(mess_inp)
-    node_blocks = [b for b in all_blocks if b[0] in ["Well", "Bimolecular"]]
-    edge_blocks = [b for b in all_blocks if b[0] == "Barrier"]
+    well_blocks = [b for b in all_blocks if b.type in ["Well", "Bimolecular"]]
+    barrier_blocks = [b for b in all_blocks if b.type == "Barrier"]
 
-    for id, block in node_blocks:
-        pass
+    id_dct = {block.label: id_ for id_, block in enumerate(well_blocks)}
 
+    wells = [block.well_object(id_dct) for block in well_blocks]
+    barriers = [block.barrier_object(id_dct) for block in barrier_blocks]
+
+    return Surface(wells=wells, barriers=barriers)
 
 
 COMMENT = pp.Literal("!") + pp.rest_of_line()
@@ -87,6 +92,50 @@ class Block(BaseModel):
     energy: float
     energy_unit: str
     contents: str
+
+    def well_object(self, id_dct: dict[str, int]) -> Well:
+        """Generate Well object from block.
+
+        :param id_dct: Dictionary mapping labels to IDs
+        :return: Well
+        """
+        if self.type == "Barrier":
+            raise ValueError("Cannot create well object from barrier block.")
+
+        assert self.label in id_dct, f"{self.label} not in {id_dct}"
+        id_ = id_dct.get(self.label)
+
+        if self.type == "Bimolecular":
+            names = self.label.split("+")
+            return NMolWell(
+                id=id_, energy=self.energy, names=names, interacting=False, fake=False
+            )
+
+        if self.label.startswith("FakeW-"):
+            names = self.label.removeprefix("FakeW-").split("+")
+            return NMolWell(
+                id=id_, energy=self.energy, names=names, interacting=True, fake=True
+            )
+
+        assert self.type == "Well"
+        return UnimolWell(id=id_, energy=self.energy, name=self.label)
+
+    def barrier_object(self, id_dct: dict[str, int]) -> Barrier:
+        """Generate Barrier object from block.
+
+        :param id_dct: Dictionary mapping labels to IDs
+        :return: Barrier
+        """
+        if not self.type == "Barrier":
+            raise ValueError("Cannot create barrier object from non-barrier block.")
+
+        name, *well_labels = self.label.split()
+        fake = name.startswith("FakeB-")
+        assert all(
+            label in id_dct for label in well_labels
+        ), f"{well_labels} not in {id_dct}"
+        well_ids = list(map(id_dct.get, well_labels))
+        return Barrier(well_ids=well_ids, name=name, energy=self.energy, fake=fake)
 
 
 def blocks(mess_inp: str | Path) -> list[Block]:
@@ -153,5 +202,5 @@ def fake_well_component_names(name: str) -> None | list[str]:
     """
     if not name.startswith("FakeW-"):
         return None
-    
+
     return sorted(name.removeprefix("FakeW-").split("+"))
