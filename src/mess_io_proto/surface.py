@@ -25,6 +25,7 @@ from .util import MessBlockParseData, mess
 
 class Feature(BaseModel, ABC):
     energy: float
+    fake: bool = False
 
     @property
     @abstractmethod
@@ -62,7 +63,6 @@ class NMolWell(Well):
     type: Literal["nmol"] = "nmol"
     names: Annotated[list[str], AfterValidator(sorted)]
     interacting: bool = False
-    fake: bool = False
 
     @property
     def label(self):
@@ -78,7 +78,6 @@ class Barrier(Feature):
     well_ids: Annotated[tuple[int, int], AfterValidator(lambda x: tuple(sorted(x)))]
     name: str
     energy: float
-    fake: bool = False
 
     @property
     def label(self):
@@ -130,6 +129,40 @@ def from_mess(mess_inp: str | Path) -> Surface:
     barriers = [barrier_from_mess_lock_parse_data(d, id_dct) for d in barrier_data]
 
     return Surface(wells=wells, barriers=barriers)
+
+
+def without_fake_wells(surf: Surface) -> Surface:
+    """Remove fake wells from a surface.
+
+    Connects the two ends and removes the fake barrier.
+
+    :param surf: Surface
+    :return: Surface
+    """
+    wells = [w.model_copy() for w in surf.wells if not w.fake]
+    barriers = []
+    # for barrier in surf.barriers:
+    #     if barrier
+
+
+def fake_well_mapping(surf: Surface) -> dict[int, int]:
+    """Get the mapping of fake wells to real wells.
+
+    :param surf: Surface
+    :return: Mapping of fake well IDs to real well IDs
+    """
+    fake_wells = [w for w in surf.wells if w.fake]
+    fake_barriers = [b for b in surf.barriers if b.fake]
+    map_dct = {}
+    for fake_well in fake_wells:
+        fake_barrier = next(
+            (b for b in fake_barriers if fake_well.id in b.well_ids), None
+        )
+        assert fake_barrier is not None, surf
+        fake_well_id = fake_well.id
+        real_well_id, = set(fake_barrier.well_ids) - {fake_well_id}
+        map_dct[fake_well_id] = real_well_id
+    return map_dct
 
 
 def subsurface(surf: Surface, well_ids: Sequence[int]) -> Surface:
