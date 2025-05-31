@@ -8,8 +8,11 @@ from typing import Annotated, Literal
 
 import more_itertools as mit
 import networkx
+import numpy
 import pyvis
-from matplotlib import axes, pyplot
+import scipy
+import scipy.interpolate
+from matplotlib import figure
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -20,8 +23,7 @@ from pydantic import (
 from .util import MessBlockParseData, mess
 
 
-class Well(BaseModel, ABC):
-    id: int
+class Feature(BaseModel, ABC):
     energy: float
 
     @property
@@ -29,6 +31,21 @@ class Well(BaseModel, ABC):
     def label(self):
         """Label."""
         pass
+
+    @property
+    @abstractmethod
+    def is_well(self):
+        """Determine whether this feature is a well."""
+        pass
+
+
+class Well(Feature):
+    id: int
+
+    @property
+    def is_well(self):
+        """Determine whether this feature is a well."""
+        return True
 
 
 class UnimolWell(Well):
@@ -57,7 +74,7 @@ class NMolWell(Well):
         return label
 
 
-class Barrier(BaseModel):
+class Barrier(Feature):
     well_ids: Annotated[tuple[int, int], AfterValidator(lambda x: tuple(sorted(x)))]
     name: str
     energy: float
@@ -67,6 +84,11 @@ class Barrier(BaseModel):
     def label(self):
         """Label."""
         return self.name
+
+    @property
+    def is_well(self):
+        """Determine whether this feature is a well."""
+        return False
 
 
 class Surface(BaseModel):
@@ -134,33 +156,61 @@ def longest_path(surf: Surface) -> Surface:
         (p for _, d in networkx.all_pairs_shortest_path(nx_gra) for p in d.values()),
         key=len,
     )
+    print(f"well_id_seq = {well_id_seq}")
     return path_from_well_id_sequence(surf, well_id_seq)
 
 
 def path_from_well_id_sequence(
     surf: Surface, well_id_seq: Sequence[int]
-) -> list[Well | Barrier]:
+) -> list[Feature]:
     """Generate ordered sequence of wells and barriers from a well ID sequence.
 
     :param surf: Surface
     :param path: Path
     :return: Wells and barriers in order
     """
-    seq = list(mit.interleave(well_id_seq, map(frozenset, mit.pairwise(well_id_seq))))
+    seq = list(
+        mit.interleave_longest(well_id_seq, map(frozenset, mit.pairwise(well_id_seq)))
+    )
     dct = {w.id: w for w in surf.wells}
     dct.update({frozenset(b.well_ids): b for b in surf.barriers})
     assert all(k in dct for k in seq), f"Disconnected sequence: {well_id_seq}"
     return list(map(dct.get, seq))
 
 
-def plot_path(path: Sequence[Well | Barrier], ax: axes.Axes):
+def plot_path(
+    path: Sequence[Feature], fig: figure.Figure, color: str = "black"
+) -> figure.Figure:
     """Plot path onto matplotlib axes.
 
     :param path: Path
     :param ax: Axes
     """
-    positions, energies = zip(*enumerate(f.energy for f in path), strict=True)
-    ax.plot(positions, energies)
+    npoints = len(path)
+    data = list(enumerate(path))
+    grid = numpy.linspace(0, npoints, 1000)
+
+    # Get the current axis
+    ax = fig.gca()
+
+    # Turn off all but the y axis
+    ax.xaxis.set_visible(False)
+    ax.set_ylabel("Energy (kcal/mol)")
+
+    # Plot labels
+    for coord, feat in data:
+        if feat.is_well:
+            ax.annotate(feat.label, (coord, feat.energy - 2), fontsize=10, ha="center")
+
+    # Plot path
+    for (coord1, feat1), (coord2, feat2) in mit.pairwise(data):
+        grid12 = grid[numpy.where((grid >= coord1) & (grid <= coord2))]
+        interp = scipy.interpolate.BPoly.from_derivatives(
+            (coord1, coord2), ((feat1.energy, 0), (feat2.energy, 0))
+        )
+        ax.plot(grid12, interp(grid12), color=color)
+
+    return fig
 
 
 def from_graph(nx_gra: networkx.MultiGraph) -> Surface:
