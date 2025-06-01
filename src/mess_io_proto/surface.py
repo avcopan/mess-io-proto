@@ -139,16 +139,24 @@ def without_fake_wells(surf: Surface) -> Surface:
     :param surf: Surface
     :return: Surface
     """
+    map_dct = fake_well_mapping(surf, full=True)
     wells = [w.model_copy() for w in surf.wells if not w.fake]
-    barriers = []
-    # for barrier in surf.barriers:
-    #     if barrier
+    barriers = [
+        Barrier(
+            well_ids=sorted(map(map_dct.get, b.well_ids)),
+            **b.model_dump(exclude="well_ids"),
+        )
+        for b in surf.barriers
+        if not b.fake
+    ]
+    return Surface(wells=wells, barriers=barriers)
 
 
-def fake_well_mapping(surf: Surface) -> dict[int, int]:
+def fake_well_mapping(surf: Surface, full: bool = False) -> dict[int, int]:
     """Get the mapping of fake wells to real wells.
 
     :param surf: Surface
+    :param full: Whether to map real wells onto themselves
     :return: Mapping of fake well IDs to real well IDs
     """
     fake_wells = [w for w in surf.wells if w.fake]
@@ -160,8 +168,12 @@ def fake_well_mapping(surf: Surface) -> dict[int, int]:
         )
         assert fake_barrier is not None, surf
         fake_well_id = fake_well.id
-        real_well_id, = set(fake_barrier.well_ids) - {fake_well_id}
+        (real_well_id,) = set(fake_barrier.well_ids) - {fake_well_id}
         map_dct[fake_well_id] = real_well_id
+
+    if full:
+        map_dct.update({w.id: w.id for w in surf.wells if not w.fake})
+
     return map_dct
 
 
@@ -189,7 +201,6 @@ def longest_path(surf: Surface) -> Surface:
         (p for _, d in networkx.all_pairs_shortest_path(nx_gra) for p in d.values()),
         key=len,
     )
-    print(f"well_id_seq = {well_id_seq}")
     return path_from_well_id_sequence(surf, well_id_seq)
 
 
