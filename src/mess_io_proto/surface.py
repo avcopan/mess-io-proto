@@ -1,14 +1,16 @@
 """Read MESS file format."""
-import polars
+
 import itertools
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Literal
 
+import automol
 import more_itertools as mit
 import networkx
 import numpy
+import polars
 import pyvis
 import scipy
 import scipy.interpolate
@@ -111,7 +113,7 @@ class Surface(BaseModel):
 
     wells: list[Well]
     barriers: list[Barrier]
-    smiles_mapping: dict[str, str] | None = None
+    amchi_mapping: dict[str, str] | None = None
 
     @model_validator(mode="after")
     def _validate_ids(self):
@@ -145,15 +147,20 @@ def from_mess(mess_inp: str | Path, spc_inp: str | Path | None = None) -> Surfac
     wells = [well_from_mess_block_parse_data(d, id_dct) for d in well_data]
     barriers = [barrier_from_mess_lock_parse_data(d, id_dct) for d in barrier_data]
 
-    smi_dct = None
+    chi_dct = None
     if spc_inp is not None:
         spc_inp = Path(spc_inp) if isinstance(spc_inp, str) else spc_inp
         spc_df = polars.read_csv(spc_inp, quote_char="'")
-        smi_dct = dict(spc_df.select(["name", "smiles"]).iter_rows())
+        spc_df = spc_df.with_columns(
+            polars.col("inchi")
+            .map_elements(automol.inchi.amchi, return_dtype=str)
+            .alias("amchi")
+        )
+        chi_dct = dict(spc_df.select(["name", "amchi"]).iter_rows())
         names = set(itertools.chain.from_iterable(w.names_list for w in wells))
-        assert all(n in smi_dct for n in names), f"{names} !<= {smi_dct}"
+        assert all(n in chi_dct for n in names), f"{names} !<= {chi_dct}"
 
-    return Surface(wells=wells, barriers=barriers, smiles_mapping=smi_dct)
+    return Surface(wells=wells, barriers=barriers, amchi_mapping=chi_dct)
 
 
 def without_fake_wells(surf: Surface) -> Surface:
@@ -174,7 +181,7 @@ def without_fake_wells(surf: Surface) -> Surface:
         for b in surf.barriers
         if not b.fake
     ]
-    return Surface(wells=wells, barriers=barriers)
+    return Surface(wells=wells, barriers=barriers, amchi_mapping=surf.amchi_mapping)
 
 
 def fake_well_mapping(surf: Surface, full: bool = False) -> dict[int, int]:
@@ -302,6 +309,7 @@ def display_network(
     height: str = "750px",
     out_name: str = "net.html",
     out_dir: str = ".pyvis",
+    stereo: bool = True,
     open_browser: bool = True,
 ) -> None:
     """Display surface as a pyvis Network.
@@ -316,7 +324,18 @@ def display_network(
         height=height, directed=False, notebook=True, cdn_resources="in_line"
     )
     for well in surf.wells:
-        vis_net.add_node(well.id, label=well.label, title=str(well.id))
+        if surf.amchi_mapping is None:
+            vis_net.add_node(well.id, label=well.label, title=str(well.id))
+        else:
+            chi = automol.amchi.join(list(map(surf.amchi_mapping.get, well.names_list)))
+            image_path = _image_file_from_amchi(chi, out_dir=out_dir, stereo=stereo)
+            vis_net.add_node(
+                well.id,
+                label=well.label,
+                title=str(well.id),
+                shape="image",
+                image=image_path,
+            )
     for barrier in surf.barriers:
         vis_net.add_edge(*barrier.well_ids, title=barrier.label)
 
@@ -386,3 +405,21 @@ def barrier_from_mess_lock_parse_data(
     ), f"{well_labels} not in {id_dct}"
     well_ids = list(map(id_dct.get, well_labels))
     return Barrier(well_ids=well_ids, name=name, energy=data.energy, fake=fake)
+
+
+# Helpers
+def _image_file_from_amchi(chi, out_dir: str | Path, stereo: bool = True):
+    """Create an SVG molecule drawing and return the path."""
+    out_dir = Path(out_dir)
+    img_dir = Path("img")
+    (out_dir / img_dir).mkdir(exist_ok=True)
+
+    gra = automol.amchi.graph(chi, stereo=stereo)
+    svg_str = automol.graph.svg_string(gra, image_size=100)
+
+    chk = automol.amchi.amchi_key(chi)
+    path = img_dir / f"{chk}.svg"
+    with open(out_dir / path, mode="w") as file:
+        file.write(svg_str)
+
+    return str(path)
