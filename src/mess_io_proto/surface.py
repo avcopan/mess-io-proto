@@ -14,13 +14,14 @@ import polars
 import pyvis
 import scipy
 import scipy.interpolate
-from matplotlib import figure
+from matplotlib import figure, offsetbox
 from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
     model_validator,
 )
+from rdkit.Chem import Draw
 
 from .util import MessBlockParseData, mess
 
@@ -164,6 +165,25 @@ def from_mess(mess_inp: str | Path, spc_inp: str | Path | None = None) -> Surfac
     return Surface(wells=wells, barriers=barriers, amchi_mapping=chi_dct)
 
 
+def with_energies_relative_to(surf: Surface, well_id: int) -> Surface:
+    """Get surface with energies relative to one well.
+
+    :param surf: Surface
+    :param well_id: Well ID
+    :return: Surface
+    """
+    well0 = next(w for w in surf.wells if w.id == well_id)
+    energy0 = well0.energy
+
+    surf = surf.model_copy(deep=True)
+    for well in surf.wells:
+        well.energy -= energy0
+    for barrier in surf.barriers:
+        barrier.energy -= energy0
+
+    return surf
+
+
 def without_fake_wells(surf: Surface) -> Surface:
     """Remove fake wells from a surface.
 
@@ -256,7 +276,11 @@ def path_from_well_id_sequence(
 
 
 def plot_path(
-    path: Sequence[Feature], fig: figure.Figure, color: str = "black"
+    path: Sequence[Feature],
+    fig: figure.Figure,
+    color: str = "black",
+    stereo: bool = True,
+    amchi_mapping: dict[str, str] | None = None,
 ) -> figure.Figure:
     """Plot path onto matplotlib axes.
 
@@ -277,7 +301,19 @@ def plot_path(
     # Plot labels
     for coord, feat in data:
         if feat.is_well:
-            ax.annotate(feat.label, (coord, feat.energy - 2), fontsize=10, ha="center")
+            x0 = coord
+            y0 = feat.energy
+            if amchi_mapping:
+                chi = automol.amchi.join(list(map(amchi_mapping.get, feat.names_list)))
+                img = _offset_image_from_amchi(chi, stereo=stereo)
+                box = offsetbox.AnnotationBbox(
+                    img, (x0, y0 - 4), frameon=False, annotation_clip=False
+                )
+                ax.add_artist(box)
+            else:
+                ax.annotate(
+                    feat.label, (x0, y0), fontsize=10, ha="center", clip_on=False
+                )
 
     # Plot path
     for (coord1, feat1), (coord2, feat2) in mit.pairwise(data):
@@ -431,3 +467,14 @@ def _image_file_from_amchi(chi, out_dir: str | Path, stereo: bool = True):
         file.write(svg_str)
 
     return str(path)
+
+
+def _offset_image_from_amchi(chi, stereo: bool = True) -> offsetbox.OffsetImage:
+    """Get PNG image array from AMChI."""
+    rdm = automol.amchi.rdkit_molecule(chi)
+    rdd = Draw.MolDraw2DCairo(150, 100)
+    rdd.drawOptions().setBackgroundColour((1, 1, 1, 0))
+    rdd.drawOptions().useBWAtomPalette()
+    rdd.DrawMolecule(rdm)
+    img = Draw._drawerToImage(rdd)
+    return offsetbox.OffsetImage(numpy.asarray(img), zoom=0.5)
