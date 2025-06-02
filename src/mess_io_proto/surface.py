@@ -96,6 +96,7 @@ class Barrier(Feature):
     well_ids: Annotated[tuple[int, int], AfterValidator(lambda x: tuple(sorted(x)))]
     name: str
     energy: float
+    barrierless: bool = False
 
     @property
     def label(self):
@@ -243,15 +244,15 @@ def path_from_well_id_sequence(
 
     :param surf: Surface
     :param path: Path
+    :param barrierless: Whether to include barrierless edges
     :return: Wells and barriers in order
     """
     seq = list(
         mit.interleave_longest(well_id_seq, map(frozenset, mit.pairwise(well_id_seq)))
     )
     dct = {w.id: w for w in surf.wells}
-    dct.update({frozenset(b.well_ids): b for b in surf.barriers})
-    assert all(k in dct for k in seq), f"Disconnected sequence: {well_id_seq}"
-    return list(map(dct.get, seq))
+    dct.update({frozenset(b.well_ids): b for b in surf.barriers if not b.barrierless})
+    return [dct.get(k) for k in seq if k in dct]
 
 
 def plot_path(
@@ -403,8 +404,15 @@ def barrier_from_mess_lock_parse_data(
     assert all(
         label in id_dct for label in well_labels
     ), f"{well_labels} not in {id_dct}"
+    barrierless = "PhaseSpaceTheory" in data.contents
     well_ids = list(map(id_dct.get, well_labels))
-    return Barrier(well_ids=well_ids, name=name, energy=data.energy, fake=fake)
+    return Barrier(
+        well_ids=well_ids,
+        name=name,
+        energy=data.energy,
+        fake=fake,
+        barrierless=barrierless,
+    )
 
 
 # Helpers
