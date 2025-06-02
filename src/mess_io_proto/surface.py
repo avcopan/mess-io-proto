@@ -1,5 +1,5 @@
 """Read MESS file format."""
-
+import polars
 import itertools
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -48,6 +48,12 @@ class Well(Feature):
         """Determine whether this feature is a well."""
         return True
 
+    @property
+    @abstractmethod
+    def names_list(self):
+        """Names."""
+        pass
+
 
 class UnimolWell(Well):
     type: Literal["unimol"] = "unimol"
@@ -57,6 +63,11 @@ class UnimolWell(Well):
     def label(self):
         """Label."""
         return self.name
+
+    @property
+    def names_list(self):
+        """Label."""
+        return [self.name]
 
 
 class NMolWell(Well):
@@ -72,6 +83,11 @@ class NMolWell(Well):
             label = f"Fake({label})"
 
         return label
+
+    @property
+    def names_list(self):
+        """Label."""
+        return self.names
 
 
 class Barrier(Feature):
@@ -95,6 +111,7 @@ class Surface(BaseModel):
 
     wells: list[Well]
     barriers: list[Barrier]
+    smiles_mapping: dict[str, str] | None = None
 
     @model_validator(mode="after")
     def _validate_ids(self):
@@ -113,7 +130,7 @@ class Surface(BaseModel):
         return self
 
 
-def from_mess(mess_inp: str | Path) -> Surface:
+def from_mess(mess_inp: str | Path, spc_inp: str | Path | None = None) -> Surface:
     """Read surface.
 
     :param mess_inp: MESS input
@@ -128,7 +145,15 @@ def from_mess(mess_inp: str | Path) -> Surface:
     wells = [well_from_mess_block_parse_data(d, id_dct) for d in well_data]
     barriers = [barrier_from_mess_lock_parse_data(d, id_dct) for d in barrier_data]
 
-    return Surface(wells=wells, barriers=barriers)
+    smi_dct = None
+    if spc_inp is not None:
+        spc_inp = Path(spc_inp) if isinstance(spc_inp, str) else spc_inp
+        spc_df = polars.read_csv(spc_inp, quote_char="'")
+        smi_dct = dict(spc_df.select(["name", "smiles"]).iter_rows())
+        names = set(itertools.chain.from_iterable(w.names_list for w in wells))
+        assert all(n in smi_dct for n in names), f"{names} !<= {smi_dct}"
+
+    return Surface(wells=wells, barriers=barriers, smiles_mapping=smi_dct)
 
 
 def without_fake_wells(surf: Surface) -> Surface:
