@@ -152,8 +152,8 @@ def from_mess(mess_inp: str | Path, spc_inp: str | Path | None = None) -> Surfac
         spc_inp = Path(spc_inp) if isinstance(spc_inp, str) else spc_inp
         spc_df = polars.read_csv(spc_inp, quote_char="'")
         spc_df = spc_df.with_columns(
-            polars.col("inchi")
-            .map_elements(automol.inchi.amchi, return_dtype=str)
+            polars.col("smiles")
+            .map_elements(automol.smiles.amchi, return_dtype=str)
             .alias("amchi")
         )
         chi_dct = dict(spc_df.select(["name", "amchi"]).iter_rows())
