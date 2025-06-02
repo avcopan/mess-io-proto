@@ -23,6 +23,7 @@ from pydantic import (
 )
 from rdkit.Chem import Draw
 
+from . import util
 from .util import MessBlockParseData, mess
 
 
@@ -273,6 +274,100 @@ def path_from_well_id_sequence(
     dct = {w.id: w for w in surf.wells}
     dct.update({frozenset(b.well_ids): b for b in surf.barriers if not b.barrierless})
     return [dct.get(k) for k in seq if k in dct]
+
+
+def plot_connected_paths(
+    surf: Surface,
+    id_seqs: Sequence[Sequence[int]],
+    fig: figure.Figure,
+    colors: Sequence[str] | None = None,
+    stereo: bool = True,
+    amchi_mapping: dict[str, str] | None = None,
+) -> figure.Figure:
+    """Plot multiple paths onto matplotlib figure.
+
+    Currently assumes the paths all start from a common root.
+    """
+    id_seqs_out = []
+    for (*prev_id_seqs, id_seq), *_ in itertools.islice(
+        mit.windowed_complete(id_seqs, n=0), 1, None
+    ):
+        # Determine longest shared prefix with previous sequences
+        prefix = max(
+            (list(mit.longest_common_prefix([id_seq, s])) for s in prev_id_seqs),
+            default=(),
+        )
+
+        # Start from the last common ID, to continue path
+        start = max(len(prefix) - 1, 0)
+        id_seqs_out.append(id_seq[start:])
+
+    # 1. Sort unique everseen indices, excluding termini
+    paths = [path_from_well_id_sequence(surf, s) for s in id_seqs]
+
+    def key_(feat: Feature) -> int | tuple[int, int]:
+        return feat.id if feat.is_well else feat.well_ids
+
+    srt_feats = list(
+        mit.unique_everseen(
+            itertools.chain.from_iterable(p[:-1] for p in paths),
+            key=key_
+        )
+    )
+    coord_map = {key_(f): i for i, f in enumerate(srt_feats)}
+    max_coord = max(coord_map.values())
+    coord_map.update({key_(p[-1]): max_coord + 1 for p in paths})
+    print(coord_map)
+
+
+def plot_path_data(
+    data: Sequence[tuple[float, Feature]],
+    fig: figure.Figure,
+    color: str = "black",
+    stereo: bool = True,
+    amchi_mapping: dict[str, str] | None = None,
+) -> figure.Figure:
+    """Plot path onto matplotlib figure.
+
+    :param data: Path data, with coordinates
+    :return: Figure
+    """
+    npoints = len(data)
+    grid = numpy.linspace(0, npoints, 1000)
+
+    # Get the current axis
+    ax = fig.gca()
+
+    # Turn off all but the y axis
+    ax.xaxis.set_visible(False)
+    ax.set_ylabel("Energy (kcal/mol)")
+
+    # Plot labels
+    for coord, feat in data:
+        if feat.is_well:
+            x0 = coord
+            y0 = feat.energy
+            if amchi_mapping:
+                chi = automol.amchi.join(list(map(amchi_mapping.get, feat.names_list)))
+                img = _offset_image_from_amchi(chi, stereo=stereo)
+                box = offsetbox.AnnotationBbox(
+                    img, (x0, y0 - 4), frameon=False, annotation_clip=False
+                )
+                ax.add_artist(box)
+            else:
+                ax.annotate(
+                    feat.label, (x0, y0), fontsize=10, ha="center", clip_on=False
+                )
+
+    # Plot path
+    for (coord1, feat1), (coord2, feat2) in mit.pairwise(data):
+        grid12 = grid[numpy.where((grid >= coord1) & (grid <= coord2))]
+        interp = scipy.interpolate.BPoly.from_derivatives(
+            (coord1, coord2), ((feat1.energy, 0), (feat2.energy, 0))
+        )
+        ax.plot(grid12, interp(grid12), color=color)
+
+    return fig
 
 
 def plot_path(

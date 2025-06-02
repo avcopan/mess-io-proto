@@ -1,6 +1,6 @@
 """Utilities."""
 
-from . import mess
+from . import mess, seq
 from .mess import MessBlockParseData
 
-__all__ = ["mess", "MessBlockParseData"]
+__all__ = ["mess", "MessBlockParseData", "seq"]
