@@ -302,23 +302,25 @@ def plot_connected_paths(
         id_seqs_out.append(id_seq[start:])
 
     # 1. Sort unique everseen indices, excluding termini
-    paths = [path_from_well_id_sequence(surf, s) for s in id_seqs_out]
-
-    def key_(feat: Feature) -> int | tuple[int, int]:
-        return feat.id if isinstance(feat, Well) else frozenset(feat.well_ids)
-
-    srt_feats = list(
-        mit.unique_everseen(
-            itertools.chain.from_iterable(p[:-1] for p in paths), key=key_
-        )
+    srt_ids = list(
+        mit.unique_everseen(itertools.chain.from_iterable(s[:-1] for s in id_seqs_out))
     )
-    coord_dct = {key_(f): i for i, f in enumerate(srt_feats)}
-    max_coord = max(coord_dct.values())
-    coord_dct.update({key_(p[-1]): max_coord + 1 for p in paths})
+    max_coord = len(srt_ids)
+    coord_dct = {id_: i for i, id_ in enumerate(srt_ids)}
+    coord_dct.update({s[-1]: max_coord for s in id_seqs_out})
+
+    feat_dct = {w.id: w for w in surf.wells}
+    feat_dct.update(
+        {frozenset(b.well_ids): b for b in surf.barriers if not b.barrierless}
+    )
 
     color_cycle = itertools.cycle(COLOR_SEQUENCE)
-    for path, color in zip(paths, color_cycle, strict=False):
-        coords = list(map(coord_dct.get, map(key_, path)))
+    for id_seq, color in zip(id_seqs_out, color_cycle, strict=False):
+        seq = list(mit.interleave_longest(id_seq, map(frozenset, mit.pairwise(id_seq))))
+        seq = [x for x in seq if x in feat_dct]
+        path = list(map(feat_dct.get, seq))
+        coords = list(map(coord_dct.get, seq))
+        coords = interpolate_missing_coordinates(coords)
         fig = plot_path_data(path=path, fig=fig, coords=coords, color=color)
 
     return fig
@@ -529,3 +531,13 @@ def _offset_image_from_amchi(chi, stereo: bool = True) -> offsetbox.OffsetImage:
     rdd.DrawMolecule(rdm)
     img = Draw._drawerToImage(rdd)
     return offsetbox.OffsetImage(numpy.asarray(img), zoom=0.5)
+
+
+def interpolate_missing_coordinates(coords: Sequence[float | None]) -> list[float]:
+    """Interpolates missing values in a list using linear interpolation."""
+    coords = numpy.array(coords, dtype=float)
+    nan = numpy.isnan(coords)
+    (miss_idxs,) = numpy.nonzero(nan)
+    (good_idxs,) = numpy.nonzero(~nan)
+    coords[nan] = numpy.interp(miss_idxs, good_idxs, coords[~nan])
+    return coords.tolist()
