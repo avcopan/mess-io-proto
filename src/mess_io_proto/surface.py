@@ -23,7 +23,6 @@ from pydantic import (
 )
 from rdkit.Chem import Draw
 
-from . import util
 from .util import MessBlockParseData, mess
 
 
@@ -261,10 +260,15 @@ def path_from_well_id_sequence(
 
 
 COLOR_SEQUENCE = [
-    "#000000",
-    "#636EFA",
-    "#EF553B",
-    "#00CC96",
+    "black",
+    "red",
+    "blue",
+    "pink",
+    "green",
+    # "#000000",
+    # "#636EFA",
+    # "#EF553B",
+    # "#00CC96",
     "#AB63FA",
     "#FFA15A",
     "#19D3F3",
@@ -371,7 +375,10 @@ def _plot_path_from_data(
     ax = fig.gca()
 
     # Turn off all but the y axis
-    # ax.xaxis.set_visible(False)
+    ax.xaxis.set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.set_ylabel("Energy (kcal/mol)")
 
     # Plot labels
