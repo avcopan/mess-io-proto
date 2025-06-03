@@ -4,6 +4,29 @@ from collections.abc import Sequence
 import numpy
 
 
+def longest_common_substring(seq1, seq2):
+    """Determine the longest common substring of two sequences.
+
+    Algorithm based on https://stackoverflow.com/a/48653758
+
+    :param seq1: First sequence
+    :param seq2: Second sequence
+    :return: Common subsequence
+    """
+    n1, n2 = len(seq1), len(seq2)
+    comp = numpy.empty((n1, n2), dtype=numpy.object_)
+    start = end = 0
+    for i1, i2 in itertools.product(range(n1), range(n2)):
+        if seq1[i1] == seq2[i2]:
+            comp[i1, i2] = 1 if (i1 == 0 or i2 == 0) else comp[i1 - 1, i2 - 1] + 1
+            if comp[i1, i2] > (end - start):
+                end = i1 + 1
+                start = end - comp[i1, i2]
+        else:
+            comp[i1, i2] = 0
+    return seq1[start:end]
+
+
 def longest_common_subsequence(
     seq1: Sequence[object], seq2: Sequence[object]
 ) -> list[object]:
