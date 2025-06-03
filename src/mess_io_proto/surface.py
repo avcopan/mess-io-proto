@@ -23,7 +23,7 @@ from pydantic import (
 )
 from rdkit.Chem import Draw
 
-from .util import MessBlockParseData, mess
+from .util import MessBlockParseData, mess, seqn
 
 
 class Feature(BaseModel, ABC):
@@ -227,6 +227,22 @@ def subsurface(surf: Surface, well_ids: Sequence[int]) -> Surface:
     )
 
 
+def feature_dict(
+    surf: Surface, drop_barrierless: bool = False
+) -> dict[int | frozenset[int], Feature]:
+    """Get features by ID.
+
+    :param surf: Surface
+    :param drop_barrierless: Whether to drop barrierless barriers
+    :return: Dicture mapping IDs to features
+    """
+    feat_dct = {w.id: w for w in surf.wells}
+    feat_dct.update(
+        {frozenset(b.well_ids): b for b in surf.barriers if not b.barrierless}
+    )
+    return feat_dct
+
+
 def longest_path(surf: Surface) -> Surface:
     """Longest surface path.
 
@@ -272,6 +288,107 @@ COLOR_SEQUENCE = [
     "#FF97FF",
     "#FECB52",
 ]
+
+
+def plot_paths(
+    surf: Surface,
+    paths: Sequence[Sequence[int]],
+    fig: figure.Figure,
+    colors: Sequence[str] | None = None,
+    stereo: bool = True,
+) -> figure.Figure:
+    """Plot multiple paths onto matplotlib figure."""
+    npaths = len(paths)
+    colors = colors or list(itertools.islice(itertools.cycle(COLOR_SEQUENCE), npaths))
+
+    # Split paths to contain only unique edges, tracking their colors
+    paths0 = paths
+    colors0 = colors
+    paths = []
+    colors = []
+    for i in range(npaths):
+        prev_paths = paths0[:i]
+        path = paths0[i]
+        color = colors0[i]
+        paths_ = seqn.unique_edge_paths(path, comp_paths=prev_paths)
+        paths.extend(paths_)
+        colors.extend([color] * len(paths_))
+
+    # Sort starting, middle, and ending wells in order of appearance
+    mid_pool = set(itertools.chain.from_iterable(p[1:-1] for p in paths))
+    start_pool = {p[0] for p in paths} - mid_pool
+    end_pool = {p[-1] for p in paths} - mid_pool
+    # BUG: Mid-ID ordering is incorrect. We need to make sure that the ordering of
+    # mid-IDs is consistent with *all* paths for situations like:
+    #   paths = [
+    #       [23, 11, 1, 19],
+    #       [22, 0, 1, 19],
+    #   ]
+    # Here, the ordering must be 11-0-1, not 11-1-0
+    order = list(mit.unique_everseen(itertools.chain.from_iterable(paths)))
+    # This patches the bug, but doesn't give the desired order (giving precedence to
+    # earlier paths)
+    # order = list(
+    #     reversed(
+    #         list(
+    #             mit.unique_everseen(
+    #                 reversed(list(itertools.chain.from_iterable(paths)))
+    #             )
+    #         )
+    #     )
+    # )
+    start_ids = sorted(start_pool, key=order.index)
+    mid_ids = sorted(mid_pool, key=order.index)
+    end_ids = sorted(end_pool, key=order.index)
+
+    # Assign coordinates to starting, middle, and ending wells
+    coord_min = -1
+    coord_max = len(mid_ids)
+    coord_dct = {id_: i for i, id_ in enumerate(mid_ids)}
+    coord_dct.update(dict.fromkeys(start_ids, coord_min))
+    coord_dct.update(dict.fromkeys(end_ids, coord_max))
+
+    # Determine coordinates for path features, including barriers
+    feat_dct = feature_dict(surf, drop_barrierless=True)
+    feats_lst = []
+    coords_lst = []
+    for path in paths:
+        keys = [id_ for id_ in seqn.path_node_edge_sequence(path) if id_ in feat_dct]
+
+        # Add feature list
+        feats = list(map(feat_dct.get, keys))
+        feats_lst.append(feats)
+
+        # Add coordinate list
+        coords = list(map(coord_dct.get, keys))
+        coords = interpolate_missing_coordinates(coords)
+        coords_lst.append(coords)
+
+        print(f"keys = {keys}")
+        print(f"feats = {feats}")
+        print(f"coords = {coords}")
+
+    # Determine energy range
+    all_feats = list(itertools.chain.from_iterable(feats_lst))
+    energy_min = min(f.energy for f in all_feats)
+    energy_max = max(f.energy for f in all_feats)
+
+    # Plot in reverse order to put earlier paths on top
+    for feats, coords, color in reversed(
+        list(zip(feats_lst, coords_lst, colors, strict=True))
+    ):
+        fig = _plot_path_features(
+            feats=feats,
+            fig=fig,
+            coords=coords,
+            color=color,
+            stereo=stereo,
+            amchi_mapping=surf.amchi_mapping,
+            x_range=(coord_min, coord_max),
+            y_range=(energy_min, energy_max),
+        )
+
+    return fig
 
 
 def plot_connected_paths(
@@ -342,6 +459,69 @@ def plot_connected_paths(
             x_range=(x_min, x_max),
             y_range=(y_min, y_max),
         )
+
+    return fig
+
+
+def _plot_path_features(
+    feats: Sequence[Feature],
+    fig: figure.Figure,
+    coords: Sequence[float],
+    color: str = "black",
+    stereo: bool = True,
+    amchi_mapping: dict[str, str] | None = None,
+    x_range: tuple[float, float] | None = None,
+    y_range: tuple[float, float] | None = None,
+) -> figure.Figure:
+    """Plot features along a path."""
+    energies = [f.energy for f in feats]
+    x_min, x_max = x_range or (min(coords), max(coords))
+    y_min, y_max = y_range or (min(energies), max(energies))
+    x_scale = x_max - x_min
+    y_scale = y_max - y_min
+    grid = numpy.linspace(*x_range, 1000)
+
+    # Get the current axis
+    ax = fig.gca()
+
+    # Turn off all but the y axis
+    ax.xaxis.set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_ylabel("Energy (kcal/mol)")
+
+    # Plot labels
+    data = list(zip(coords, feats, strict=True))
+    shift_x = True
+    for coord, feat in data[::-1]:
+        if isinstance(feat, Well):
+            x0 = coord
+            y0 = feat.energy
+            x_ = x0 + 0.15 * x_scale if shift_x else x0
+            y_ = y0 if shift_x else y0 - 0.1 * y_scale
+            shift_x = False
+            if amchi_mapping:
+                chi = automol.amchi.join(list(map(amchi_mapping.get, feat.names_list)))
+                img = _offset_image_from_amchi(chi, stereo=stereo)
+                box = offsetbox.AnnotationBbox(
+                    img, (x_, y_), frameon=False, annotation_clip=False
+                )
+                ax.add_artist(box)
+            else:
+                ax.annotate(
+                    feat.label, (x_, y_), fontsize=10, ha="center", clip_on=False
+                )
+
+    # Plot path
+    for (coord1, feat1), (coord2, feat2) in mit.pairwise(data):
+        print("coord1, coord2", coord1, coord2)
+        print("feat1, feat2", feat1, feat2)
+        grid12 = grid[numpy.where((grid >= coord1) & (grid <= coord2))]
+        interp = scipy.interpolate.BPoly.from_derivatives(
+            (coord1, coord2), ((feat1.energy, 0), (feat2.energy, 0))
+        )
+        ax.plot(grid12, interp(grid12), color=color)
 
     return fig
 

@@ -1,10 +1,45 @@
+"""Utility functions acting on sequences."""
+
 import itertools
 from collections.abc import Sequence
 
+import more_itertools as mit
 import numpy
 
 
-def longest_common_substring(seq1, seq2):
+def path_node_edge_sequence(
+    path: Sequence[object], ordered: bool = False
+) -> list[object | tuple[object, object] | frozenset[object]]:
+    """Determine sequence of nodes and edges traversing a path in order.
+
+    :param path: Path sequence
+    :return: Sequence of nodes and edges
+    """
+    edge_iter = mit.pairwise(path) if ordered else map(frozenset, mit.pairwise(path))
+    edge_iter = edge_iter if ordered else map(frozenset, edge_iter)
+    return list(mit.interleave_longest(path, edge_iter))
+
+
+def unique_edge_paths(
+    path: Sequence[object], comp_paths: Sequence[Sequence[object]]
+) -> list[list[object]]:
+    """Split a path to remove edges it shares with other paths.
+
+    "Edges" here are adjacent values.
+
+    :param seq: Path sequence
+    :param seqs: Path sequences to compare against
+    :return: Path subsequences with unique edges
+    """
+    edges = set(itertools.chain.from_iterable(map(mit.pairwise, comp_paths)))
+    return list(
+        filter(lambda s: len(s) > 1, mit.split_when(path, lambda x, y: (x, y) in edges))
+    )
+
+
+def longest_common_substring(
+    seq1: Sequence[object], seq2: Sequence[object]
+) -> list[object]:
     """Determine the longest common substring of two sequences.
 
     Algorithm based on https://stackoverflow.com/a/48653758
