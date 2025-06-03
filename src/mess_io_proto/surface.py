@@ -279,7 +279,6 @@ def plot_connected_paths(
     surf: Surface,
     id_seqs: Sequence[Sequence[int]],
     fig: figure.Figure,
-    colors: Sequence[str] | None = None,
     stereo: bool = True,
     amchi_mapping: dict[str, str] | None = None,
 ) -> figure.Figure:
@@ -314,35 +313,59 @@ def plot_connected_paths(
         {frozenset(b.well_ids): b for b in surf.barriers if not b.barrierless}
     )
 
-    color_cycle = itertools.cycle(COLOR_SEQUENCE)
-    for id_seq, color in zip(id_seqs_out, color_cycle, strict=False):
+    data_lst = []
+    for id_seq in id_seqs_out:
         seq = list(mit.interleave_longest(id_seq, map(frozenset, mit.pairwise(id_seq))))
         seq = [x for x in seq if x in feat_dct]
         path = list(map(feat_dct.get, seq))
         coords = list(map(coord_dct.get, seq))
         coords = interpolate_missing_coordinates(coords)
-        fig = plot_path_data(path=path, fig=fig, coords=coords, color=color)
+        data = list(zip(coords, path, strict=True))
+        data_lst.append(data)
+
+    coords, feats = zip(*itertools.chain.from_iterable(data_lst), strict=True)
+    x_min = min(coords)
+    x_max = max(coords)
+    y_min = min(f.energy for f in feats)
+    y_max = max(f.energy for f in feats)
+
+    color_cycle = itertools.cycle(COLOR_SEQUENCE)
+    for data, color in reversed(list(zip(data_lst, color_cycle, strict=False))):
+        _plot_path_from_data(
+            data=data,
+            fig=fig,
+            color=color,
+            stereo=stereo,
+            amchi_mapping=amchi_mapping,
+            x_range=(x_min, x_max),
+            y_range=(y_min, y_max),
+        )
 
     return fig
 
 
-def plot_path_data(
-    path: Sequence[Feature],
+def _plot_path_from_data(
+    data: Sequence[tuple[float, Feature]],
     fig: figure.Figure,
-    coords: Sequence[float] | None = None,
     color: str = "black",
     stereo: bool = True,
     amchi_mapping: dict[str, str] | None = None,
+    x_range: tuple[float, float] | None = None,
+    y_range: tuple[float, float] | None = None,
 ) -> figure.Figure:
     """Plot path onto matplotlib figure.
 
     :param data: Path data, with coordinates
     :return: Figure
     """
-    coords = list(range(len(path))) if coords is None else coords
+    coords, feats = zip(*data, strict=True)
     grid = numpy.linspace(0, max(coords), 1000)
 
-    data = list(zip(coords, path, strict=True))
+    energies = [f.energy for f in feats]
+    x_min, x_max = x_range or (min(coords), max(coords))
+    y_min, y_max = y_range or (min(energies), max(energies))
+    x_scale = x_max - x_min
+    y_scale = y_max - y_min
 
     # Get the current axis
     ax = fig.gca()
@@ -352,20 +375,24 @@ def plot_path_data(
     ax.set_ylabel("Energy (kcal/mol)")
 
     # Plot labels
-    for coord, feat in data:
+    shift_x = True
+    for coord, feat in data[::-1]:
         if isinstance(feat, Well):
             x0 = coord
             y0 = feat.energy
+            x_ = x0 + 0.15 * x_scale if shift_x else x0
+            y_ = y0 if shift_x else y0 - 0.1 * y_scale
+            shift_x = False
             if amchi_mapping:
                 chi = automol.amchi.join(list(map(amchi_mapping.get, feat.names_list)))
                 img = _offset_image_from_amchi(chi, stereo=stereo)
                 box = offsetbox.AnnotationBbox(
-                    img, (x0, y0 - 4), frameon=False, annotation_clip=False
+                    img, (x_, y_), frameon=False, annotation_clip=False
                 )
                 ax.add_artist(box)
             else:
                 ax.annotate(
-                    feat.label, (x0, y0), fontsize=10, ha="center", clip_on=False
+                    feat.label, (x_, y_), fontsize=10, ha="center", clip_on=False
                 )
 
     # Plot path
@@ -524,13 +551,13 @@ def _image_file_from_amchi(chi, out_dir: str | Path, stereo: bool = True):
 
 def _offset_image_from_amchi(chi, stereo: bool = True) -> offsetbox.OffsetImage:
     """Get PNG image array from AMChI."""
-    rdm = automol.amchi.rdkit_molecule(chi)
+    rdm = automol.amchi.rdkit_molecule(chi, stereo=stereo)
     rdd = Draw.MolDraw2DCairo(150, 100)
     rdd.drawOptions().setBackgroundColour((1, 1, 1, 0))
     rdd.drawOptions().useBWAtomPalette()
     rdd.DrawMolecule(rdm)
     img = Draw._drawerToImage(rdd)
-    return offsetbox.OffsetImage(numpy.asarray(img), zoom=0.5)
+    return offsetbox.OffsetImage(numpy.asarray(img), zoom=0.4)
 
 
 def interpolate_missing_coordinates(coords: Sequence[float | None]) -> list[float]:
