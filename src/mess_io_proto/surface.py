@@ -260,15 +260,10 @@ def path_from_well_id_sequence(
 
 
 COLOR_SEQUENCE = [
-    "black",
-    "red",
-    "blue",
-    "pink",
-    "green",
-    # "#000000",
-    # "#636EFA",
-    # "#EF553B",
-    # "#00CC96",
+    "#000000",
+    "#636EFA",
+    "#EF553B",
+    "#00CC96",
     "#AB63FA",
     "#FFA15A",
     "#19D3F3",
@@ -283,6 +278,7 @@ def plot_connected_paths(
     surf: Surface,
     id_seqs: Sequence[Sequence[int]],
     fig: figure.Figure,
+    colors: Sequence[str] | None = None,
     stereo: bool = True,
     amchi_mapping: dict[str, str] | None = None,
 ) -> figure.Figure:
@@ -290,6 +286,9 @@ def plot_connected_paths(
 
     Currently assumes the paths all start from a common root.
     """
+    nseq = len(id_seqs)
+    colors = colors or list(itertools.islice(itertools.cycle(COLOR_SEQUENCE), nseq))
+
     id_seqs_out = []
     for (*prev_id_seqs, id_seq), *_ in itertools.islice(
         mit.windowed_complete(id_seqs, n=0), 1, None
@@ -333,8 +332,7 @@ def plot_connected_paths(
     y_min = min(f.energy for f in feats)
     y_max = max(f.energy for f in feats)
 
-    color_cycle = itertools.cycle(COLOR_SEQUENCE)
-    for data, color in reversed(list(zip(data_lst, color_cycle, strict=False))):
+    for data, color in reversed(list(zip(data_lst, colors, strict=False))):
         _plot_path_from_data(
             data=data,
             fig=fig,
