@@ -37,6 +37,56 @@ def unique_edge_paths(
     )
 
 
+def ordered_merge_all(seqs: Sequence[Sequence[object]]) -> Sequence[object]:
+    """Merge sequences while maintaining their internal orderings.
+
+    Precedence in the order of appearance is given to earlier sequences.
+
+    Assumes sequences without repetition.
+
+    :param seqs: Sequences
+    :return: Merged sequence
+    """
+    for seq in seqs:
+        assert len(set(seq)) == len(seq), f"{seq} has repeats"
+
+
+def ordered_merge(
+    seq1: Sequence[object], seq2: Sequence[object], check: bool = True
+) -> Sequence[object]:
+    """Merge sequences while maintaining their internal orderings.
+
+    Precedence in the order of appearance is given to earlier sequences.
+
+    Assumes sequences without repetition.
+
+    :param seq1: Sequence
+    :param seq2: Sequence
+    :return: Merged sequence
+    """
+    if check:
+        assert len(set(seq1)) == len(seq1), f"{seq1} has repeats"
+        assert len(set(seq2)) == len(seq2), f"{seq2} has repeats"
+
+    # Iterate over values in seq1
+    seq = []
+    idx0 = 0
+    for val1 in seq1:
+        idx = next((i for i, v in enumerate(seq2) if v == val1), None)
+
+        # If there is a match, insert the intervening values from seq2
+        if idx:
+            seq.extend(seq2[idx0:idx])
+            idx0 = idx + 1
+
+        # Insert the current value from seq1
+        seq.append(val1)
+
+    # Add the remaining values from seq2
+    seq.extend(seq2[idx0:])
+    return seq
+
+
 def longest_common_substring_bounds(
     seq1: Sequence[object], seq2: Sequence[object]
 ) -> list[tuple[int, int]]:
