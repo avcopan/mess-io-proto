@@ -299,10 +299,10 @@ def plot_paths(
     mid_pool = set(itertools.chain.from_iterable(p[1:-1] for p in paths))
     start_pool = {p[0] for p in paths} - mid_pool
     end_pool = {p[-1] for p in paths} - mid_pool
-    order = seqn.ordered_merge_all(paths)
-    start_ids = sorted(start_pool, key=order.index)
-    mid_ids = sorted(mid_pool, key=order.index)
-    end_ids = sorted(end_pool, key=order.index)
+    all_ids = seqn.ordered_merge_all(paths)
+    start_ids = sorted(start_pool, key=all_ids.index)
+    mid_ids = sorted(mid_pool, key=all_ids.index)
+    end_ids = sorted(end_pool, key=all_ids.index)
 
     # Assign coordinates to starting, middle, and ending wells
     coord_min = -1
@@ -332,81 +332,50 @@ def plot_paths(
     energy_min = min(f.energy for f in all_feats)
     energy_max = max(f.energy for f in all_feats)
 
-    # Plot in reverse order to put earlier paths on top
-    for feats, coords, color in reversed(
-        list(zip(feats_lst, coords_lst, colors, strict=True))
-    ):
-        fig = _plot_path_features(
-            feats=feats,
-            fig=fig,
-            coords=coords,
-            color=color,
-            stereo=stereo,
-            amchi_mapping=surf.amchi_mapping,
-            x_range=(coord_min, coord_max),
-            y_range=(energy_min, energy_max),
-        )
-
-    return fig
-
-
-def _plot_path_features(
-    feats: Sequence[Feature],
-    fig: figure.Figure,
-    coords: Sequence[float],
-    color: str = "black",
-    stereo: bool = True,
-    amchi_mapping: dict[str, str] | None = None,
-    x_range: tuple[float, float] | None = None,
-    y_range: tuple[float, float] | None = None,
-) -> figure.Figure:
-    """Plot features along a path."""
-    energies = [f.energy for f in feats]
-    x_min, x_max = x_range or (min(coords), max(coords))
-    y_min, y_max = y_range or (min(energies), max(energies))
-    x_scale = x_max - x_min
-    y_scale = y_max - y_min
-    grid = numpy.linspace(*x_range, 1000)
-
-    # Get the current axis
+    # Configure axes
     ax = fig.gca()
-
-    # Turn off all but the y axis
     ax.xaxis.set_visible(False)
     ax.spines["top"].set_visible(False)
     ax.spines["bottom"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.set_ylabel("Energy (kcal/mol)")
 
-    # Plot labels
-    data = list(zip(coords, feats, strict=True))
-    shift_x = True
-    for coord, feat in data[::-1]:
-        if isinstance(feat, Well):
-            x0 = coord
-            y0 = feat.energy
-            x_ = x0 + 0.15 * x_scale if shift_x else x0
-            y_ = y0 if shift_x else y0 - 0.1 * y_scale
-            shift_x = False
-            if amchi_mapping:
-                chi = automol.amchi.join(list(map(amchi_mapping.get, feat.names_list)))
-                img = _offset_image_from_amchi(chi, stereo=stereo)
-                box = offsetbox.AnnotationBbox(
-                    img, (x_, y_), frameon=False, annotation_clip=False
-                )
-                ax.add_artist(box)
-            else:
-                ax.annotate(
-                    feat.label, (x_, y_), fontsize=10, ha="center", clip_on=False
-                )
+    # Plot in reverse order to put earlier paths on top
+    grid = numpy.linspace(coord_min, coord_max, 1000)
+    for feats, coords, color in reversed(
+        list(zip(feats_lst, coords_lst, colors, strict=True))
+    ):
+        data = list(zip(coords, feats, strict=True))
 
-    # Plot path
-    for (coord1, feat1), (coord2, feat2) in mit.pairwise(data):
-        grid12 = grid[numpy.where((grid >= coord1) & (grid <= coord2))]
-        interp = scipy.interpolate.BPoly.from_derivatives(
-            (coord1, coord2), ((feat1.energy, 0), (feat2.energy, 0))
-        )
-        ax.plot(grid12, interp(grid12), color=color)
+        # Plot path
+        for (coord1, feat1), (coord2, feat2) in mit.pairwise(data):
+            grid12 = grid[numpy.where((grid >= coord1) & (grid <= coord2))]
+            interp = scipy.interpolate.BPoly.from_derivatives(
+                (coord1, coord2), ((feat1.energy, 0), (feat2.energy, 0))
+            )
+            ax.plot(grid12, interp(grid12), color=color)
+
+    # Plot molecules / labels
+    x_scale = coord_max - coord_min
+    y_scale = energy_max - energy_min
+    for id_ in all_ids:
+        feat = feat_dct.get(id_)
+        coord = coord_dct.get(id_)
+
+        dx = (-0.15 if id_ in start_ids else +0.15 if id_ in end_ids else 0) * x_scale
+        dy = (-0.1 if id_ in mid_ids else 0) * y_scale
+        x_ = coord + dx
+        y_ = feat.energy + dy
+
+        if surf.amchi_mapping:
+            chi = automol.amchi.join(list(map(surf.amchi_mapping.get, feat.names_list)))
+            img = _offset_image_from_amchi(chi, stereo=stereo)
+            box = offsetbox.AnnotationBbox(
+                img, (x_, y_), frameon=False, annotation_clip=False
+            )
+            ax.add_artist(box)
+        else:
+            ax.annotate(feat.label, (x_, y_), fontsize=10, ha="center", clip_on=False)
 
     return fig
 

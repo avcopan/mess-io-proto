@@ -72,7 +72,7 @@ def ordered_merge(seq1: Sequence[object], seq2: Sequence[object]) -> Sequence[ob
         idx = next((i for i, v in enumerate(seq2) if v == val1), None)
 
         # If there is a match, insert the intervening values from seq2
-        if idx:
+        if idx is not None:
             seq.extend(seq2[idx0:idx])
             idx0 = idx + 1
 
@@ -81,6 +81,8 @@ def ordered_merge(seq1: Sequence[object], seq2: Sequence[object]) -> Sequence[ob
 
     # Add the remaining values from seq2
     seq.extend(seq2[idx0:])
+
+    assert len(set(seq)) == len(seq), f"seq1 = {seq1}\nseq2={seq2}\nseq={seq}"
     return seq
 
 
