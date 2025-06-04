@@ -1,5 +1,6 @@
 """Utility functions acting on sequences."""
 
+import functools
 import itertools
 from collections.abc import Sequence
 
@@ -50,10 +51,10 @@ def ordered_merge_all(seqs: Sequence[Sequence[object]]) -> Sequence[object]:
     for seq in seqs:
         assert len(set(seq)) == len(seq), f"{seq} has repeats"
 
+    return functools.reduce(ordered_merge, seqs, [])
 
-def ordered_merge(
-    seq1: Sequence[object], seq2: Sequence[object], check: bool = True
-) -> Sequence[object]:
+
+def ordered_merge(seq1: Sequence[object], seq2: Sequence[object]) -> Sequence[object]:
     """Merge sequences while maintaining their internal orderings.
 
     Precedence in the order of appearance is given to earlier sequences.
@@ -64,10 +65,6 @@ def ordered_merge(
     :param seq2: Sequence
     :return: Merged sequence
     """
-    if check:
-        assert len(set(seq1)) == len(seq1), f"{seq1} has repeats"
-        assert len(set(seq2)) == len(seq2), f"{seq2} has repeats"
-
     # Iterate over values in seq1
     seq = []
     idx0 = 0
