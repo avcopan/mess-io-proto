@@ -318,25 +318,7 @@ def plot_paths(
     mid_pool = set(itertools.chain.from_iterable(p[1:-1] for p in paths))
     start_pool = {p[0] for p in paths} - mid_pool
     end_pool = {p[-1] for p in paths} - mid_pool
-    # BUG: Mid-ID ordering is incorrect. We need to make sure that the ordering of
-    # mid-IDs is consistent with *all* paths for situations like:
-    #   paths = [
-    #       [23, 11, 1, 19],
-    #       [22, 0, 1, 19],
-    #   ]
-    # Here, the ordering must be 11-0-1, not 11-1-0
-    order = list(mit.unique_everseen(itertools.chain.from_iterable(paths)))
-    # This patches the bug, but doesn't give the desired order (giving precedence to
-    # earlier paths)
-    # order = list(
-    #     reversed(
-    #         list(
-    #             mit.unique_everseen(
-    #                 reversed(list(itertools.chain.from_iterable(paths)))
-    #             )
-    #         )
-    #     )
-    # )
+    order = seqn.ordered_merge_all(paths)
     start_ids = sorted(start_pool, key=order.index)
     mid_ids = sorted(mid_pool, key=order.index)
     end_ids = sorted(end_pool, key=order.index)
@@ -363,10 +345,6 @@ def plot_paths(
         coords = list(map(coord_dct.get, keys))
         coords = interpolate_missing_coordinates(coords)
         coords_lst.append(coords)
-
-        print(f"keys = {keys}")
-        print(f"feats = {feats}")
-        print(f"coords = {coords}")
 
     # Determine energy range
     all_feats = list(itertools.chain.from_iterable(feats_lst))
@@ -515,8 +493,6 @@ def _plot_path_features(
 
     # Plot path
     for (coord1, feat1), (coord2, feat2) in mit.pairwise(data):
-        print("coord1, coord2", coord1, coord2)
-        print("feat1, feat2", feat1, feat2)
         grid12 = grid[numpy.where((grid >= coord1) & (grid <= coord2))]
         interp = scipy.interpolate.BPoly.from_derivatives(
             (coord1, coord2), ((feat1.energy, 0), (feat2.energy, 0))
