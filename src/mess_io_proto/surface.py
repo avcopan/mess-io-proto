@@ -250,29 +250,10 @@ def longest_path(surf: Surface) -> Surface:
     :return: Path surface
     """
     nx_gra = graph(surf)
-    well_id_seq = max(
+    return max(
         (p for _, d in networkx.all_pairs_shortest_path(nx_gra) for p in d.values()),
         key=len,
     )
-    return path_from_well_id_sequence(surf, well_id_seq)
-
-
-def path_from_well_id_sequence(
-    surf: Surface, well_id_seq: Sequence[int]
-) -> list[Feature]:
-    """Generate ordered sequence of wells and barriers from a well ID sequence.
-
-    :param surf: Surface
-    :param path: Path
-    :param barrierless: Whether to include barrierless edges
-    :return: Wells and barriers in order
-    """
-    seq = list(
-        mit.interleave_longest(well_id_seq, map(frozenset, mit.pairwise(well_id_seq)))
-    )
-    dct = {w.id: w for w in surf.wells}
-    dct.update({frozenset(b.well_ids): b for b in surf.barriers if not b.barrierless})
-    return [dct.get(k) for k in seq if k in dct]
 
 
 COLOR_SEQUENCE = [
@@ -369,78 +350,6 @@ def plot_paths(
     return fig
 
 
-def plot_connected_paths(
-    surf: Surface,
-    id_seqs: Sequence[Sequence[int]],
-    fig: figure.Figure,
-    colors: Sequence[str] | None = None,
-    stereo: bool = True,
-    amchi_mapping: dict[str, str] | None = None,
-) -> figure.Figure:
-    """Plot multiple paths onto matplotlib figure.
-
-    Currently assumes the paths all start from a common root.
-    """
-    nseq = len(id_seqs)
-    colors = colors or list(itertools.islice(itertools.cycle(COLOR_SEQUENCE), nseq))
-
-    id_seqs_out = []
-    for (*prev_id_seqs, id_seq), *_ in itertools.islice(
-        mit.windowed_complete(id_seqs, n=0), 1, None
-    ):
-        # Determine longest shared prefix with previous sequences
-        prefix = max(
-            (list(mit.longest_common_prefix([id_seq, s])) for s in prev_id_seqs),
-            default=(),
-        )
-
-        # Start from the last common ID, to continue path
-        start = max(len(prefix) - 1, 0)
-        id_seqs_out.append(id_seq[start:])
-
-    # 1. Sort unique everseen indices, excluding termini
-    srt_ids = list(
-        mit.unique_everseen(itertools.chain.from_iterable(s[:-1] for s in id_seqs_out))
-    )
-    max_coord = len(srt_ids)
-    coord_dct = {id_: i for i, id_ in enumerate(srt_ids)}
-    coord_dct.update({s[-1]: max_coord for s in id_seqs_out})
-
-    feat_dct = {w.id: w for w in surf.wells}
-    feat_dct.update(
-        {frozenset(b.well_ids): b for b in surf.barriers if not b.barrierless}
-    )
-
-    data_lst = []
-    for id_seq in id_seqs_out:
-        seq = list(mit.interleave_longest(id_seq, map(frozenset, mit.pairwise(id_seq))))
-        seq = [x for x in seq if x in feat_dct]
-        path = list(map(feat_dct.get, seq))
-        coords = list(map(coord_dct.get, seq))
-        coords = interpolate_missing_coordinates(coords)
-        data = list(zip(coords, path, strict=True))
-        data_lst.append(data)
-
-    coords, feats = zip(*itertools.chain.from_iterable(data_lst), strict=True)
-    x_min = min(coords)
-    x_max = max(coords)
-    y_min = min(f.energy for f in feats)
-    y_max = max(f.energy for f in feats)
-
-    for data, color in reversed(list(zip(data_lst, colors, strict=False))):
-        _plot_path_from_data(
-            data=data,
-            fig=fig,
-            color=color,
-            stereo=stereo,
-            amchi_mapping=amchi_mapping,
-            x_range=(x_min, x_max),
-            y_range=(y_min, y_max),
-        )
-
-    return fig
-
-
 def _plot_path_features(
     feats: Sequence[Feature],
     fig: figure.Figure,
@@ -471,71 +380,6 @@ def _plot_path_features(
 
     # Plot labels
     data = list(zip(coords, feats, strict=True))
-    shift_x = True
-    for coord, feat in data[::-1]:
-        if isinstance(feat, Well):
-            x0 = coord
-            y0 = feat.energy
-            x_ = x0 + 0.15 * x_scale if shift_x else x0
-            y_ = y0 if shift_x else y0 - 0.1 * y_scale
-            shift_x = False
-            if amchi_mapping:
-                chi = automol.amchi.join(list(map(amchi_mapping.get, feat.names_list)))
-                img = _offset_image_from_amchi(chi, stereo=stereo)
-                box = offsetbox.AnnotationBbox(
-                    img, (x_, y_), frameon=False, annotation_clip=False
-                )
-                ax.add_artist(box)
-            else:
-                ax.annotate(
-                    feat.label, (x_, y_), fontsize=10, ha="center", clip_on=False
-                )
-
-    # Plot path
-    for (coord1, feat1), (coord2, feat2) in mit.pairwise(data):
-        grid12 = grid[numpy.where((grid >= coord1) & (grid <= coord2))]
-        interp = scipy.interpolate.BPoly.from_derivatives(
-            (coord1, coord2), ((feat1.energy, 0), (feat2.energy, 0))
-        )
-        ax.plot(grid12, interp(grid12), color=color)
-
-    return fig
-
-
-def _plot_path_from_data(
-    data: Sequence[tuple[float, Feature]],
-    fig: figure.Figure,
-    color: str = "black",
-    stereo: bool = True,
-    amchi_mapping: dict[str, str] | None = None,
-    x_range: tuple[float, float] | None = None,
-    y_range: tuple[float, float] | None = None,
-) -> figure.Figure:
-    """Plot path onto matplotlib figure.
-
-    :param data: Path data, with coordinates
-    :return: Figure
-    """
-    coords, feats = zip(*data, strict=True)
-    grid = numpy.linspace(0, max(coords), 1000)
-
-    energies = [f.energy for f in feats]
-    x_min, x_max = x_range or (min(coords), max(coords))
-    y_min, y_max = y_range or (min(energies), max(energies))
-    x_scale = x_max - x_min
-    y_scale = y_max - y_min
-
-    # Get the current axis
-    ax = fig.gca()
-
-    # Turn off all but the y axis
-    ax.xaxis.set_visible(False)
-    ax.spines["top"].set_visible(False)
-    ax.spines["bottom"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.set_ylabel("Energy (kcal/mol)")
-
-    # Plot labels
     shift_x = True
     for coord, feat in data[::-1]:
         if isinstance(feat, Well):
