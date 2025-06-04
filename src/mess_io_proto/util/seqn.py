@@ -37,10 +37,10 @@ def unique_edge_paths(
     )
 
 
-def longest_common_substring(
+def longest_common_substring_bounds(
     seq1: Sequence[object], seq2: Sequence[object]
-) -> list[object]:
-    """Determine the longest common substring of two sequences.
+) -> list[tuple[int, int]]:
+    """Determine the longest common substring slices of two sequences.
 
     Algorithm based on https://stackoverflow.com/a/48653758
 
@@ -50,16 +50,36 @@ def longest_common_substring(
     """
     n1, n2 = len(seq1), len(seq2)
     comp = numpy.empty((n1, n2), dtype=numpy.object_)
-    start = end = 0
+    max_len = 0
+    slices = []
     for i1, i2 in itertools.product(range(n1), range(n2)):
         if seq1[i1] == seq2[i2]:
             comp[i1, i2] = 1 if (i1 == 0 or i2 == 0) else comp[i1 - 1, i2 - 1] + 1
-            if comp[i1, i2] > (end - start):
-                end = i1 + 1
-                start = end - comp[i1, i2]
+            end = i1 + 1
+            start = end - comp[i1, i2]
+            if comp[i1, i2] > max_len:
+                max_len = end - start
+                slices = [(start, end)]
+            elif comp[i1, i2] == max_len:
+                slices.append((start, end))
         else:
             comp[i1, i2] = 0
-    return seq1[start:end]
+    return slices
+
+
+def longest_common_substrings(
+    seq1: Sequence[object], seq2: Sequence[object]
+) -> list[list[object]]:
+    """Determine the longest common substring of two sequences.
+
+    Algorithm based on https://stackoverflow.com/a/48653758
+
+    :param seq1: First sequence
+    :param seq2: Second sequence
+    :return: Common subsequence
+    """
+    slices = [slice(s, e) for s, e in longest_common_substring_bounds(seq1, seq2)]
+    return [seq1[s] for s in slices]
 
 
 def longest_common_subsequence(
