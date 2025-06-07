@@ -277,6 +277,7 @@ def plot_paths(
     fig: figure.Figure,
     colors: Sequence[str] | None = None,
     stereo: bool = True,
+    coord_dct: dict[int, float] | None = None,
 ) -> figure.Figure:
     """Plot multiple paths onto matplotlib figure."""
     npaths = len(paths)
@@ -296,20 +297,23 @@ def plot_paths(
         colors.extend([color] * len(paths_))
 
     # Sort starting, middle, and ending wells in order of appearance
+    all_ids = seqn.ordered_merge_all(paths)
     mid_pool = set(itertools.chain.from_iterable(p[1:-1] for p in paths))
     start_pool = {p[0] for p in paths} - mid_pool
     end_pool = {p[-1] for p in paths} - mid_pool
-    all_ids = seqn.ordered_merge_all(paths)
     start_ids = sorted(start_pool, key=all_ids.index)
     mid_ids = sorted(mid_pool, key=all_ids.index)
     end_ids = sorted(end_pool, key=all_ids.index)
+    if coord_dct is None:
+        # Assign coordinates to starting, middle, and ending wells
+        coord_min = -1
+        coord_max = len(mid_ids)
+        coord_dct = {id_: i for i, id_ in enumerate(mid_ids)}
+        coord_dct.update(dict.fromkeys(start_ids, coord_min))
+        coord_dct.update(dict.fromkeys(end_ids, coord_max))
 
-    # Assign coordinates to starting, middle, and ending wells
-    coord_min = -1
-    coord_max = len(mid_ids)
-    coord_dct = {id_: i for i, id_ in enumerate(mid_ids)}
-    coord_dct.update(dict.fromkeys(start_ids, coord_min))
-    coord_dct.update(dict.fromkeys(end_ids, coord_max))
+    coord_min = min(coord_dct.values())
+    coord_max = max(coord_dct.values())
 
     # Determine coordinates for path features, including barriers
     feat_dct = feature_dict(surf, drop_barrierless=True)
