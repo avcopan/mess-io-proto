@@ -189,6 +189,41 @@ def without_fake_wells(surf: Surface) -> Surface:
     return Surface(wells=wells, barriers=barriers, amchi_mapping=surf.amchi_mapping)
 
 
+def remove_well(surf: Surface, id_: int) -> Surface:
+    """Remove a well from a surface.
+
+    Drops the lowest barrier and takes its product as the product of the other barriers.
+
+    :param surf: Surface
+    :param id_: Well ID
+    :return: Surface
+    """
+    well_barriers = [b for b in surf.barriers if id_ in b.well_ids]
+    other_barriers = [b for b in surf.barriers if id_ not in b.well_ids]
+
+    well_barriers = sorted(well_barriers, key=lambda b: b.energy, reverse=True)
+    low_barrier = well_barriers.pop()
+    (prod_well_id,) = set(low_barrier.well_ids) - {id_}
+
+    map_dct = {
+        i: i for i in itertools.chain.from_iterable(b.well_ids for b in well_barriers)
+    }
+    map_dct[id_] = prod_well_id
+
+    well_barriers = [
+        Barrier(
+            well_ids=sorted(map(map_dct.get, b.well_ids)),
+            **b.model_dump(exclude="well_ids"),
+        )
+        for b in well_barriers
+    ]
+
+    # Instantiate new surface without this well
+    wells = [w for w in surf.wells if w.id != id_]
+    barriers = [*well_barriers, *other_barriers]
+    return Surface(wells=wells, barriers=barriers, amchi_mapping=surf.amchi_mapping)
+
+
 def fake_well_mapping(surf: Surface, full: bool = False) -> dict[int, int]:
     """Get the mapping of fake wells to real wells.
 
@@ -278,8 +313,12 @@ def plot_paths(
     colors: Sequence[str] | None = None,
     stereo: bool = True,
     coord_dct: dict[int, float] | None = None,
+    log_excel: bool = False,
 ) -> figure.Figure:
-    """Plot multiple paths onto matplotlib figure."""
+    """Plot multiple paths onto matplotlib figure.
+
+    :param log_excel: Whether to log points for Excel output
+    """
     npaths = len(paths)
     colors = colors or list(itertools.islice(itertools.cycle(COLOR_SEQUENCE), npaths))
 
@@ -306,7 +345,7 @@ def plot_paths(
     end_ids = sorted(end_pool, key=all_ids.index)
     if coord_dct is None:
         # Assign coordinates to starting, middle, and ending wells
-        coord_min = -1
+        coord_min = -0.5
         coord_max = len(mid_ids)
         coord_dct = {id_: i for i, id_ in enumerate(mid_ids)}
         coord_dct.update(dict.fromkeys(start_ids, coord_min))
@@ -319,7 +358,7 @@ def plot_paths(
     feat_dct = feature_dict(surf, drop_barrierless=True)
     feats_lst = []
     coords_lst = []
-    for path in paths:
+    for num, path in enumerate(paths):
         keys = [id_ for id_ in seqn.path_node_edge_sequence(path) if id_ in feat_dct]
 
         # Add feature list
@@ -330,6 +369,11 @@ def plot_paths(
         coords = list(map(coord_dct.get, keys))
         coords = interpolate_missing_coordinates(coords)
         coords_lst.append(coords)
+
+        if log_excel:
+            print(f"\nPath {num + 1}")
+            for feat, coord in zip(feats, coords, strict=True):
+                print(f"{feat.label}\t{feat.energy:.4f}\t{coord}")
 
     # Determine energy range
     all_feats = list(itertools.chain.from_iterable(feats_lst))
